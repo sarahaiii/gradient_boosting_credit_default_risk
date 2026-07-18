@@ -1,8 +1,8 @@
 {
-  "demo_mode": true,
-  "rows": 5000,
-  "columns": 14,
+  "demo_mode": false,
+  "rows": 307511,
+  "columns": 122,
   "best_model": "logistic_regression_numpy",
-  "cv_auc_mean": 0.7567254027124423,
-  "out_of_sample_auc": 0.8472931765078611
+  "cv_auc_mean": 0.6986073983377952,
+  "out_of_sample_auc": 0.7400594178116308
 }

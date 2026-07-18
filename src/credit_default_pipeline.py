@@ -532,6 +532,10 @@ def save_heatmap(path: Path, df: pd.DataFrame, cols: List[str]) -> None:
 
 def permutation_importance(model, X: np.ndarray, y: np.ndarray, feature_names: List[str], n: int = 20) -> pd.DataFrame:
     rng = np.random.default_rng(RANDOM_SEED)
+    if len(y) > 8000:
+        idx = rng.choice(len(y), size=8000, replace=False)
+        X = X[idx]
+        y = y[idx]
     baseline = auc_score(y, model.predict_proba(X))
     rows = []
     for j, name in enumerate(feature_names):
@@ -601,9 +605,9 @@ def main() -> None:
     comparison.to_csv(OUTPUTS / "model_comparison.csv", index=False)
 
     save_bar_chart(FIGURES / "target_distribution.svg", "Target Distribution", [str(i) for i in sorted(train[TARGET].unique())], [float((train[TARGET] == i).mean()) for i in sorted(train[TARGET].unique())])
-    numeric = [c for c in clean_known_anomalies(train).columns if c != TARGET and pd.api.types.is_numeric_dtype(clean_known_anomalies(train)[c])]
-    selected = [c for c in ["TARGET", "EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3", "AMT_CREDIT", "AMT_INCOME_TOTAL", "AMT_ANNUITY", "DAYS_BIRTH", "DAYS_EMPLOYED", "CREDIT_INCOME_RATIO"] if c in clean_known_anomalies(train).columns]
-    save_heatmap(FIGURES / "correlation_heatmap.svg", clean_known_anomalies(train), selected[:10])
+    cleaned_train = clean_known_anomalies(train)
+    selected = [c for c in ["TARGET", "EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3", "AMT_CREDIT", "AMT_INCOME_TOTAL", "AMT_ANNUITY", "DAYS_BIRTH", "DAYS_EMPLOYED", "CREDIT_INCOME_RATIO"] if c in cleaned_train.columns]
+    save_heatmap(FIGURES / "correlation_heatmap.svg", cleaned_train, selected[:10])
     fpr, tpr = roc_points(y_valid, valid_prob)
     save_line_chart(FIGURES / "roc_curve.svg", f"ROC Curve - AUC {metrics['auc']:.3f}", fpr, tpr, "False Positive Rate", "True Positive Rate")
     recall, precision = pr_points(y_valid, valid_prob)
