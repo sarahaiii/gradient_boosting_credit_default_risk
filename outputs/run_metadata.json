@@ -2,7 +2,7 @@
   "demo_mode": false,
   "rows": 307511,
   "columns": 122,
-  "best_model": "logistic_regression_numpy",
-  "cv_auc_mean": 0.6986073983377952,
-  "out_of_sample_auc": 0.7400594178116308
+  "best_model": "hist_gradient_boosting_sklearn",
+  "cv_auc_mean": 0.7476094702541671,
+  "out_of_sample_auc": 0.7593598595138232
 }

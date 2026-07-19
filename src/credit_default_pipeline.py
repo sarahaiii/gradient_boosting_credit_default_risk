@@ -194,15 +194,36 @@ def missing_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 def clean_known_anomalies(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
+    out["MISSING_VALUE_COUNT"] = out.isna().sum(axis=1)
     if "DAYS_EMPLOYED" in out.columns:
         out["DAYS_EMPLOYED_ANOM"] = (out["DAYS_EMPLOYED"] == 365243).astype(int)
         out.loc[out["DAYS_EMPLOYED"] == 365243, "DAYS_EMPLOYED"] = np.nan
+    if "DAYS_BIRTH" in out.columns:
+        out["AGE_YEARS"] = -out["DAYS_BIRTH"] / 365.25
+    if {"DAYS_EMPLOYED", "DAYS_BIRTH"}.issubset(out.columns):
+        out["EMPLOYED_AGE_RATIO"] = out["DAYS_EMPLOYED"] / out["DAYS_BIRTH"].replace(0, np.nan)
     if {"AMT_CREDIT", "AMT_INCOME_TOTAL"}.issubset(out.columns):
         out["CREDIT_INCOME_RATIO"] = out["AMT_CREDIT"] / out["AMT_INCOME_TOTAL"].replace(0, np.nan)
     if {"AMT_ANNUITY", "AMT_INCOME_TOTAL"}.issubset(out.columns):
         out["ANNUITY_INCOME_RATIO"] = out["AMT_ANNUITY"] / out["AMT_INCOME_TOTAL"].replace(0, np.nan)
-    if "DAYS_BIRTH" in out.columns:
-        out["AGE_YEARS"] = -out["DAYS_BIRTH"] / 365.25
+    if {"AMT_ANNUITY", "AMT_CREDIT"}.issubset(out.columns):
+        out["CREDIT_TERM"] = out["AMT_ANNUITY"] / out["AMT_CREDIT"].replace(0, np.nan)
+    if {"AMT_CREDIT", "AMT_GOODS_PRICE"}.issubset(out.columns):
+        out["CREDIT_GOODS_RATIO"] = out["AMT_CREDIT"] / out["AMT_GOODS_PRICE"].replace(0, np.nan)
+    if {"AMT_GOODS_PRICE", "AMT_INCOME_TOTAL"}.issubset(out.columns):
+        out["GOODS_INCOME_RATIO"] = out["AMT_GOODS_PRICE"] / out["AMT_INCOME_TOTAL"].replace(0, np.nan)
+    if {"AMT_INCOME_TOTAL", "CNT_FAM_MEMBERS"}.issubset(out.columns):
+        out["INCOME_PER_PERSON"] = out["AMT_INCOME_TOTAL"] / out["CNT_FAM_MEMBERS"].replace(0, np.nan)
+    if {"AMT_CREDIT", "CNT_CHILDREN"}.issubset(out.columns):
+        out["CREDIT_PER_CHILD"] = out["AMT_CREDIT"] / (1 + out["CNT_CHILDREN"])
+    ext_cols = [c for c in ["EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3"] if c in out.columns]
+    if ext_cols:
+        out["EXT_SOURCE_MEAN"] = out[ext_cols].mean(axis=1)
+        out["EXT_SOURCE_STD"] = out[ext_cols].std(axis=1)
+        out["EXT_SOURCE_MIN"] = out[ext_cols].min(axis=1)
+        out["EXT_SOURCE_MAX"] = out[ext_cols].max(axis=1)
+        if len(ext_cols) == 3:
+            out["EXT_SOURCE_PRODUCT"] = out["EXT_SOURCE_1"] * out["EXT_SOURCE_2"] * out["EXT_SOURCE_3"]
     return out
 
 
@@ -261,10 +282,11 @@ def fit_preprocessor(df: pd.DataFrame) -> Tuple[Preprocessor, np.ndarray, np.nda
 
 
 class NumpyLogistic:
-    def __init__(self, lr: float = 0.06, epochs: int = 800, l2: float = 0.01):
+    def __init__(self, lr: float = 0.06, epochs: int = 800, l2: float = 0.01, class_weight: str = "balanced"):
         self.lr = lr
         self.epochs = epochs
         self.l2 = l2
+        self.class_weight = class_weight
         self.w: Optional[np.ndarray] = None
         self.b = 0.0
 
@@ -272,8 +294,9 @@ class NumpyLogistic:
         rng = np.random.default_rng(RANDOM_SEED)
         self.w = rng.normal(0, 0.01, X.shape[1])
         self.b = 0.0
-        pos_weight = (len(y) - y.sum()) / max(y.sum(), 1)
+        pos_weight = (len(y) - y.sum()) / max(y.sum(), 1) if self.class_weight == "balanced" else 1.0
         weights = np.where(y == 1, pos_weight, 1.0)
+        weights = weights / weights.mean()
         for _ in range(self.epochs):
             p = sigmoid(X @ self.w + self.b)
             err = (p - y) * weights
@@ -286,15 +309,20 @@ class NumpyLogistic:
 
 
 class DecisionStumpBoost:
-    def __init__(self, n_estimators: int = 80, learning_rate: float = 0.08):
+    def __init__(self, n_estimators: int = 120, learning_rate: float = 0.06, max_features: int = 60, class_weight: str = "balanced"):
         self.n_estimators = n_estimators
         self.learning_rate = learning_rate
+        self.max_features = max_features
+        self.class_weight = class_weight
         self.init_log_odds = 0.0
         self.stumps: List[Tuple[int, float, float, float]] = []
         self.feature_importances_: Optional[np.ndarray] = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "DecisionStumpBoost":
-        pos = np.clip(y.mean(), 1e-4, 1 - 1e-4)
+        pos_weight = (len(y) - y.sum()) / max(y.sum(), 1) if self.class_weight == "balanced" else 1.0
+        weights = np.where(y == 1, pos_weight, 1.0).astype(float)
+        weights = weights / weights.mean()
+        pos = np.clip(np.average(y, weights=weights), 1e-4, 1 - 1e-4)
         self.init_log_odds = float(np.log(pos / (1 - pos)))
         raw = np.full(len(y), self.init_log_odds)
         importances = np.zeros(X.shape[1])
@@ -302,18 +330,19 @@ class DecisionStumpBoost:
         candidate_features = np.arange(X.shape[1])
         for _ in range(self.n_estimators):
             residual = y - sigmoid(raw)
+            weighted_residual = residual * weights
             best = None
-            sample_features = rng.choice(candidate_features, size=min(35, X.shape[1]), replace=False)
+            sample_features = rng.choice(candidate_features, size=min(self.max_features, X.shape[1]), replace=False)
             for j in sample_features:
-                qs = np.unique(np.quantile(X[:, j], [0.2, 0.35, 0.5, 0.65, 0.8]))
+                qs = np.unique(np.quantile(X[:, j], [0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9]))
                 for thr in qs:
                     left = X[:, j] <= thr
-                    if left.sum() < 20 or (~left).sum() < 20:
+                    if left.sum() < 30 or (~left).sum() < 30:
                         continue
-                    lv = residual[left].mean()
-                    rv = residual[~left].mean()
+                    lv = weighted_residual[left].sum() / max(weights[left].sum(), 1e-12)
+                    rv = weighted_residual[~left].sum() / max(weights[~left].sum(), 1e-12)
                     pred = np.where(left, lv, rv)
-                    score = float(((residual - pred) ** 2).mean())
+                    score = float(np.average((residual - pred) ** 2, weights=weights))
                     if best is None or score < best[0]:
                         best = (score, j, float(thr), float(lv), float(rv))
             if best is None:
@@ -321,7 +350,7 @@ class DecisionStumpBoost:
             _, j, thr, lv, rv = best
             update = np.where(X[:, j] <= thr, lv, rv)
             raw += self.learning_rate * update
-            importances[j] += float(np.var(update))
+            importances[j] += float(np.average(update ** 2, weights=weights))
             self.stumps.append((j, thr, lv, rv))
         self.feature_importances_ = importances / max(importances.sum(), 1e-12)
         return self
@@ -350,14 +379,37 @@ def kfold_indices(n: int, k: int = 5) -> Iterable[Tuple[np.ndarray, np.ndarray]]
         yield train, valid
 
 
+def tune_numpy_models(X_train: np.ndarray, y_train: np.ndarray, X_valid: np.ndarray, y_valid: np.ndarray) -> Tuple[Dict[str, object], pd.DataFrame]:
+    rng = np.random.default_rng(RANDOM_SEED)
+    sample_size = min(25000, len(y_train))
+    sample_idx = rng.choice(len(y_train), size=sample_size, replace=False)
+    Xt, yt = X_train[sample_idx], y_train[sample_idx]
+    candidates = [
+        ("logistic_regression_numpy", NumpyLogistic(lr=0.05, epochs=600, l2=0.003)),
+        ("logistic_regression_numpy", NumpyLogistic(lr=0.06, epochs=800, l2=0.01)),
+        ("logistic_regression_numpy", NumpyLogistic(lr=0.04, epochs=900, l2=0.03)),
+        ("gradient_boosted_stumps_numpy", DecisionStumpBoost(n_estimators=90, learning_rate=0.05, max_features=45)),
+        ("gradient_boosted_stumps_numpy", DecisionStumpBoost(n_estimators=130, learning_rate=0.035, max_features=60)),
+    ]
+    best: Dict[str, Tuple[float, object, Dict[str, object]]] = {}
+    rows = []
+    for family, model in candidates:
+        model.fit(Xt, yt)
+        prob = model.predict_proba(X_valid)
+        score = auc_score(y_valid, prob)
+        params = {k: v for k, v in vars(model).items() if k in {"lr", "epochs", "l2", "n_estimators", "learning_rate", "max_features", "class_weight"}}
+        rows.append({"model_family": family, "validation_auc": score, "params": json.dumps(params)})
+        if family not in best or score > best[family][0]:
+            best[family] = (score, model, params)
+    tuned_models = {family: item[1] for family, item in best.items()}
+    return tuned_models, pd.DataFrame(rows).sort_values("validation_auc", ascending=False)
+
+
 def run_numpy_models(X: np.ndarray, y: np.ndarray) -> Tuple[pd.DataFrame, Dict[str, object]]:
     train_idx, valid_idx = split_indices(len(y))
     X_train, y_train = X[train_idx], y[train_idx]
     X_valid, y_valid = X[valid_idx], y[valid_idx]
-    models = {
-        "logistic_regression_numpy": NumpyLogistic(),
-        "gradient_boosted_stumps_numpy": DecisionStumpBoost(),
-    }
+    models, tuning_results = tune_numpy_models(X_train, y_train, X_valid, y_valid)
     sklearn = optional_module("sklearn")
     if sklearn is not None:
         try:
@@ -442,13 +494,18 @@ def run_numpy_models(X: np.ndarray, y: np.ndarray) -> Tuple[pd.DataFrame, Dict[s
         rows.append({"model": name, "validation_auc": m["auc"], "precision": m["precision"], "recall": m["recall"], "f1": m["f1"]})
         fitted[name] = model
     cv_scores = []
-    for tr, va in kfold_indices(len(y), 5):
-        model = DecisionStumpBoost()
-        model.fit(X[tr], y[tr])
-        cv_scores.append(auc_score(y[va], model.predict_proba(X[va])))
+    cv_sample_size = min(120000, len(y))
+    rng = np.random.default_rng(RANDOM_SEED)
+    cv_base_idx = rng.choice(len(y), size=cv_sample_size, replace=False) if cv_sample_size < len(y) else np.arange(len(y))
+    X_cv, y_cv = X[cv_base_idx], y[cv_base_idx]
+    for tr, va in kfold_indices(len(y_cv), 5):
+        model = NumpyLogistic(lr=0.06, epochs=550, l2=0.01)
+        model.fit(X_cv[tr], y_cv[tr])
+        cv_scores.append(auc_score(y_cv[va], model.predict_proba(X_cv[va])))
     best_name = max(rows, key=lambda r: r["validation_auc"])["model"]
     best_model = fitted[best_name]
-    best_prob = best_model.predict_proba(X_valid)
+    raw_best_prob = best_model.predict_proba(X_valid)
+    best_prob = raw_best_prob[:, 1] if getattr(raw_best_prob, "ndim", 1) == 2 else raw_best_prob
     best_threshold = choose_threshold(y_valid, best_prob)
     details = {
         "best_name": best_name,
@@ -459,6 +516,7 @@ def run_numpy_models(X: np.ndarray, y: np.ndarray) -> Tuple[pd.DataFrame, Dict[s
         "threshold": best_threshold,
         "cv_auc_mean": float(np.mean(cv_scores)),
         "cv_auc_std": float(np.std(cv_scores)),
+        "tuning_results": tuning_results,
     }
     return pd.DataFrame(rows).sort_values("validation_auc", ascending=False), details
 
@@ -536,12 +594,16 @@ def permutation_importance(model, X: np.ndarray, y: np.ndarray, feature_names: L
         idx = rng.choice(len(y), size=8000, replace=False)
         X = X[idx]
         y = y[idx]
-    baseline = auc_score(y, model.predict_proba(X))
+    raw_baseline_prob = model.predict_proba(X)
+    baseline_prob = raw_baseline_prob[:, 1] if getattr(raw_baseline_prob, "ndim", 1) == 2 else raw_baseline_prob
+    baseline = auc_score(y, baseline_prob)
     rows = []
     for j, name in enumerate(feature_names):
         Xp = X.copy()
         rng.shuffle(Xp[:, j])
-        score = auc_score(y, model.predict_proba(Xp))
+        raw_score_prob = model.predict_proba(Xp)
+        score_prob = raw_score_prob[:, 1] if getattr(raw_score_prob, "ndim", 1) == 2 else raw_score_prob
+        score = auc_score(y, score_prob)
         rows.append({"feature": name, "importance": max(baseline - score, 0)})
     return pd.DataFrame(rows).sort_values("importance", ascending=False).head(n)
 
@@ -584,9 +646,12 @@ def write_report(demo: bool, comparison: pd.DataFrame, details: Dict[str, object
         "",
         "## Notes",
         "",
-        "- Drop the Kaggle CSVs into `data/raw` to run on real data.",
-        "- The fallback gradient boosted stump model exists so the project runs even without ML packages installed.",
-        "- Install `requirements.txt` to enable the full sklearn/LightGBM/XGBoost/CatBoost/SHAP workflow.",
+        "- The real Home Credit Kaggle files are loaded from `data/raw` when present.",
+        "- Class weights are used to handle the imbalanced default target.",
+        "- Feature engineering includes credit/income ratios, annuity ratios, employment-age ratios, external-source aggregates, and missing-value counts.",
+        "- Hyperparameter tuning results are saved to `outputs/hyperparameter_tuning_results.csv`.",
+        "- scikit-learn and CatBoost models are used when installed; the NumPy stump model remains as a fallback.",
+        "- On macOS, LightGBM and XGBoost may require the native `libomp` runtime before they can import.",
     ]
     (OUTPUTS / "credit_default_report.md").write_text("\n".join(lines))
 
@@ -603,6 +668,8 @@ def main() -> None:
     valid_prob = details["valid_prob"]
     metrics = binary_metrics(y_valid, valid_prob, details["threshold"])
     comparison.to_csv(OUTPUTS / "model_comparison.csv", index=False)
+    if "tuning_results" in details:
+        details["tuning_results"].to_csv(OUTPUTS / "hyperparameter_tuning_results.csv", index=False)
 
     save_bar_chart(FIGURES / "target_distribution.svg", "Target Distribution", [str(i) for i in sorted(train[TARGET].unique())], [float((train[TARGET] == i).mean()) for i in sorted(train[TARGET].unique())])
     cleaned_train = clean_known_anomalies(train)
@@ -621,7 +688,8 @@ def main() -> None:
 
     if test is not None:
         X_test = prep.transform(test)
-        pred = details["best_model"].predict_proba(X_test)
+        raw_pred = details["best_model"].predict_proba(X_test)
+        pred = raw_pred[:, 1] if getattr(raw_pred, "ndim", 1) == 2 else raw_pred
         ids = test[ID_COL].to_numpy() if ID_COL in test.columns else np.arange(len(test))
         pd.DataFrame({ID_COL: ids, TARGET: pred}).to_csv(OUTPUTS / ("demo_submission.csv" if demo else "kaggle_submission.csv"), index=False)
 
