@@ -169,12 +169,139 @@ def make_demo_data(n_train: int = 5000, n_test: int = 1200) -> Tuple[pd.DataFram
     return frame(n_train, True), frame(n_test, False)
 
 
+
+def flatten_columns(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+    df = df.copy()
+    flat = []
+    for col in df.columns:
+        if isinstance(col, tuple):
+            pieces = [str(x) for x in col if x not in ("", None)]
+            flat.append(prefix + "_" + "_".join(pieces).upper())
+        else:
+            flat.append(str(col))
+    df.columns = flat
+    return df.reset_index()
+
+
+def aggregate_bureau_features() -> Optional[pd.DataFrame]:
+    path = RAW / "bureau.csv"
+    if not path.exists():
+        return None
+    usecols = [
+        ID_COL,
+        "SK_ID_BUREAU",
+        "CREDIT_ACTIVE",
+        "CREDIT_TYPE",
+        "DAYS_CREDIT",
+        "DAYS_CREDIT_ENDDATE",
+        "DAYS_ENDDATE_FACT",
+        "AMT_CREDIT_SUM",
+        "AMT_CREDIT_SUM_DEBT",
+        "AMT_CREDIT_SUM_OVERDUE",
+        "AMT_ANNUITY",
+        "CNT_CREDIT_PROLONG",
+    ]
+    bureau = pd.read_csv(path, usecols=lambda c: c in usecols)
+    bureau["BUREAU_HAS_DEBT"] = (bureau.get("AMT_CREDIT_SUM_DEBT", 0).fillna(0) > 0).astype(int)
+    bureau["BUREAU_HAS_OVERDUE"] = (bureau.get("AMT_CREDIT_SUM_OVERDUE", 0).fillna(0) > 0).astype(int)
+    if {"AMT_CREDIT_SUM_DEBT", "AMT_CREDIT_SUM"}.issubset(bureau.columns):
+        bureau["BUREAU_DEBT_CREDIT_RATIO_RAW"] = bureau["AMT_CREDIT_SUM_DEBT"] / bureau["AMT_CREDIT_SUM"].replace(0, np.nan)
+    num_cols = [c for c in bureau.columns if c != ID_COL and pd.api.types.is_numeric_dtype(bureau[c])]
+    agg = bureau.groupby(ID_COL)[num_cols].agg(["count", "mean", "max", "min", "sum"])
+    agg = flatten_columns(agg, "BUREAU")
+    if "CREDIT_ACTIVE" in bureau.columns:
+        active = pd.crosstab(bureau[ID_COL], bureau["CREDIT_ACTIVE"], normalize="index").add_prefix("BUREAU_ACTIVE_SHARE_").reset_index()
+        agg = agg.merge(active, on=ID_COL, how="left")
+    if "CREDIT_TYPE" in bureau.columns:
+        top_types = bureau["CREDIT_TYPE"].value_counts().head(6).index
+        type_work = bureau.loc[bureau["CREDIT_TYPE"].isin(top_types), [ID_COL, "CREDIT_TYPE"]]
+        ctype = pd.crosstab(type_work[ID_COL], type_work["CREDIT_TYPE"], normalize="index").add_prefix("BUREAU_TYPE_SHARE_").reset_index()
+        agg = agg.merge(ctype, on=ID_COL, how="left")
+    return agg
+
+
+def aggregate_previous_application_features() -> Optional[pd.DataFrame]:
+    path = RAW / "previous_application.csv"
+    if not path.exists():
+        return None
+    usecols = [
+        ID_COL,
+        "SK_ID_PREV",
+        "NAME_CONTRACT_STATUS",
+        "NAME_CONTRACT_TYPE",
+        "AMT_APPLICATION",
+        "AMT_CREDIT",
+        "AMT_ANNUITY",
+        "AMT_DOWN_PAYMENT",
+        "RATE_DOWN_PAYMENT",
+        "DAYS_DECISION",
+        "CNT_PAYMENT",
+        "HOUR_APPR_PROCESS_START",
+    ]
+    prev = pd.read_csv(path, usecols=lambda c: c in usecols)
+    if {"AMT_CREDIT", "AMT_APPLICATION"}.issubset(prev.columns):
+        prev["PREV_CREDIT_APPLICATION_RATIO_RAW"] = prev["AMT_CREDIT"] / prev["AMT_APPLICATION"].replace(0, np.nan)
+    if {"AMT_ANNUITY", "AMT_CREDIT"}.issubset(prev.columns):
+        prev["PREV_ANNUITY_CREDIT_RATIO_RAW"] = prev["AMT_ANNUITY"] / prev["AMT_CREDIT"].replace(0, np.nan)
+    num_cols = [c for c in prev.columns if c != ID_COL and pd.api.types.is_numeric_dtype(prev[c])]
+    agg = prev.groupby(ID_COL)[num_cols].agg(["count", "mean", "max", "min", "sum"])
+    agg = flatten_columns(agg, "PREV")
+    if "NAME_CONTRACT_STATUS" in prev.columns:
+        status = pd.crosstab(prev[ID_COL], prev["NAME_CONTRACT_STATUS"], normalize="index").add_prefix("PREV_STATUS_SHARE_").reset_index()
+        agg = agg.merge(status, on=ID_COL, how="left")
+    if "NAME_CONTRACT_TYPE" in prev.columns:
+        ctype = pd.crosstab(prev[ID_COL], prev["NAME_CONTRACT_TYPE"], normalize="index").add_prefix("PREV_TYPE_SHARE_").reset_index()
+        agg = agg.merge(ctype, on=ID_COL, how="left")
+    return agg
+
+
+
+def aggregate_installment_features() -> Optional[pd.DataFrame]:
+    path = RAW / "installments_payments.csv"
+    if not path.exists():
+        return None
+    usecols = [
+        ID_COL,
+        "SK_ID_PREV",
+        "NUM_INSTALMENT_VERSION",
+        "NUM_INSTALMENT_NUMBER",
+        "DAYS_INSTALMENT",
+        "DAYS_ENTRY_PAYMENT",
+        "AMT_INSTALMENT",
+        "AMT_PAYMENT",
+    ]
+    inst = pd.read_csv(path, usecols=lambda c: c in usecols)
+    inst["INSTAL_DAYS_LATE"] = inst["DAYS_ENTRY_PAYMENT"] - inst["DAYS_INSTALMENT"]
+    inst["INSTAL_IS_LATE"] = (inst["INSTAL_DAYS_LATE"] > 0).astype(int)
+    inst["INSTAL_PAYMENT_DIFF"] = inst["AMT_INSTALMENT"] - inst["AMT_PAYMENT"]
+    inst["INSTAL_UNDERPAID"] = (inst["INSTAL_PAYMENT_DIFF"] > 0).astype(int)
+    inst["INSTAL_PAYMENT_RATIO_RAW"] = inst["AMT_PAYMENT"] / inst["AMT_INSTALMENT"].replace(0, np.nan)
+    num_cols = [c for c in inst.columns if c != ID_COL and pd.api.types.is_numeric_dtype(inst[c])]
+    agg = inst.groupby(ID_COL)[num_cols].agg(["count", "mean", "max", "min", "sum"])
+    return flatten_columns(agg, "INSTAL")
+
+def add_secondary_table_features(train: pd.DataFrame, test: Optional[pd.DataFrame]) -> Tuple[pd.DataFrame, Optional[pd.DataFrame], List[str]]:
+    added = []
+    train_out = train.copy()
+    test_out = test.copy() if test is not None else None
+    for name, builder in [("bureau", aggregate_bureau_features), ("previous_application", aggregate_previous_application_features), ("installments_payments", aggregate_installment_features)]:
+        features = builder()
+        if features is None:
+            continue
+        added.append(name)
+        train_out = train_out.merge(features, on=ID_COL, how="left")
+        if test_out is not None:
+            test_out = test_out.merge(features, on=ID_COL, how="left")
+    return train_out, test_out, added
+
 def load_data() -> Tuple[pd.DataFrame, Optional[pd.DataFrame], bool]:
     train_path = RAW / "application_train.csv"
     test_path = RAW / "application_test.csv"
     if train_path.exists():
         train = pd.read_csv(train_path)
         test = pd.read_csv(test_path) if test_path.exists() else None
+        train, test, added = add_secondary_table_features(train, test)
+        (OUTPUTS / "secondary_tables_used.json").write_text(json.dumps({"tables": added}, indent=2))
         return train, test, False
     train, test = make_demo_data()
     return train, test, True
@@ -648,7 +775,7 @@ def write_report(demo: bool, comparison: pd.DataFrame, details: Dict[str, object
         "",
         "- The real Home Credit Kaggle files are loaded from `data/raw` when present.",
         "- Class weights are used to handle the imbalanced default target.",
-        "- Feature engineering includes credit/income ratios, annuity ratios, employment-age ratios, external-source aggregates, and missing-value counts.",
+        "- Feature engineering includes credit/income ratios, annuity ratios, employment-age ratios, external-source aggregates, missing-value counts, bureau history aggregates, previous-application aggregates, and installment payment behavior aggregates.",
         "- Hyperparameter tuning results are saved to `outputs/hyperparameter_tuning_results.csv`.",
         "- scikit-learn and CatBoost models are used when installed; the NumPy stump model remains as a fallback.",
         "- On macOS, LightGBM and XGBoost may require the native `libomp` runtime before they can import.",
@@ -699,6 +826,7 @@ def main() -> None:
         "demo_mode": demo,
         "rows": int(len(train)),
         "columns": int(train.shape[1]),
+        "secondary_tables_used": json.loads((OUTPUTS / "secondary_tables_used.json").read_text()).get("tables", []) if (OUTPUTS / "secondary_tables_used.json").exists() else [],
         "best_model": details["best_name"],
         "cv_auc_mean": details["cv_auc_mean"],
         "out_of_sample_auc": metrics["auc"],

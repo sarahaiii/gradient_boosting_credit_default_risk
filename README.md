@@ -27,7 +27,7 @@ data/raw/application_train.csv
 data/raw/application_test.csv
 ```
 
-The pipeline starts with `application_train.csv`, as requested in the spec. If `application_test.csv` is present, it creates a Kaggle-ready submission.
+The pipeline starts with `application_train.csv` and also uses `bureau.csv`, `previous_application.csv`, and `installments_payments.csv` when present. If `application_test.csv` is present, it creates a Kaggle-ready submission.
 
 ## Run
 
@@ -59,3 +59,12 @@ The main written report is:
 ```text
 outputs/credit_default_report.md
 ```
+
+## Current Best Result
+
+The final real-data run uses class weights, engineered application features, bureau aggregates, previous-application aggregates, and installment-payment aggregates.
+
+- Best model: `hist_gradient_boosting_sklearn`
+- Cross-validation AUC: `0.7694 +/- 0.0027`
+- Out-of-sample AUC: `0.7756`
+

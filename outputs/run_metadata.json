@@ -1,8 +1,13 @@
 {
   "demo_mode": false,
   "rows": 307511,
-  "columns": 122,
+  "columns": 315,
+  "secondary_tables_used": [
+    "bureau",
+    "previous_application",
+    "installments_payments"
+  ],
   "best_model": "hist_gradient_boosting_sklearn",
-  "cv_auc_mean": 0.7476094702541671,
-  "out_of_sample_auc": 0.7593598595138232
+  "cv_auc_mean": 0.7693688528707077,
+  "out_of_sample_auc": 0.7756049448373887
 }

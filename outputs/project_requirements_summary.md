@@ -20,11 +20,17 @@ The main files used in this project are:
 
 - `application_train.csv`
 - `application_test.csv`
+- `bureau.csv`
+- `previous_application.csv`
+- `installments_payments.csv`
 
 The project currently uses the real Kaggle files locally in:
 
 - `data/raw/application_train.csv`
 - `data/raw/application_test.csv`
+- `data/raw/bureau.csv`
+- `data/raw/previous_application.csv`
+- `data/raw/installments_payments.csv`
 
 The raw Kaggle data is kept local and is not pushed to GitHub.
 
@@ -89,6 +95,7 @@ The project produces the following outputs:
 - Feature importance table
 - Feature importance chart
 - SHAP-style proxy summary
+- Secondary-table usage metadata
 - Kaggle submission file
 
 The main output files are:
@@ -111,14 +118,15 @@ The project has been run on the real Home Credit Kaggle data.
 Current results:
 
 - Training rows: 307,511
-- Columns: 122
+- Columns after feature engineering: 315
+- Secondary tables used: bureau, previous_application, installments_payments
 - Best model: hist_gradient_boosting_sklearn
-- Cross-validation AUC: 0.7476 +/- 0.0041
-- Out-of-sample AUC: 0.7594
-- Selected threshold: 0.1388
-- Precision: 0.2341
-- Recall: 0.4484
-- F1-score: 0.3076
+- Cross-validation AUC: 0.7694 +/- 0.0027
+- Out-of-sample AUC: 0.7756
+- Selected threshold: 0.1640
+- Precision: 0.2688
+- Recall: 0.4093
+- F1-score: 0.3245
 
 The PDF does not specify a required minimum AUC. It requires AUC to be used as the main evaluation metric and reported clearly.
 

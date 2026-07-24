@@ -1,6 +1,6 @@
 model_family,validation_auc,params
-logistic_regression_numpy,0.7352112323070712,"{""lr"": 0.04, ""epochs"": 900, ""l2"": 0.03, ""class_weight"": ""balanced""}"
-logistic_regression_numpy,0.734515122752494,"{""lr"": 0.06, ""epochs"": 800, ""l2"": 0.01, ""class_weight"": ""balanced""}"
-logistic_regression_numpy,0.7341378183976599,"{""lr"": 0.05, ""epochs"": 600, ""l2"": 0.003, ""class_weight"": ""balanced""}"
-gradient_boosted_stumps_numpy,0.7138426896301494,"{""n_estimators"": 90, ""learning_rate"": 0.05, ""max_features"": 45, ""class_weight"": ""balanced""}"
-gradient_boosted_stumps_numpy,0.7086684439563288,"{""n_estimators"": 130, ""learning_rate"": 0.035, ""max_features"": 60, ""class_weight"": ""balanced""}"
+logistic_regression_numpy,0.7530551001753681,"{""lr"": 0.04, ""epochs"": 900, ""l2"": 0.03, ""class_weight"": ""balanced""}"
+logistic_regression_numpy,0.7517531105531621,"{""lr"": 0.06, ""epochs"": 800, ""l2"": 0.01, ""class_weight"": ""balanced""}"
+logistic_regression_numpy,0.7516710336305967,"{""lr"": 0.05, ""epochs"": 600, ""l2"": 0.003, ""class_weight"": ""balanced""}"
+gradient_boosted_stumps_numpy,0.7183244125950143,"{""n_estimators"": 90, ""learning_rate"": 0.05, ""max_features"": 45, ""class_weight"": ""balanced""}"
+gradient_boosted_stumps_numpy,0.7171809156093818,"{""n_estimators"": 130, ""learning_rate"": 0.035, ""max_features"": 60, ""class_weight"": ""balanced""}"
