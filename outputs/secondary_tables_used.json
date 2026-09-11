@@ -1,0 +1,7 @@
+{
+  "tables": [
+    "bureau",
+    "previous_application",
+    "installments_payments"
+  ]
+}
